@@ -1,30 +1,44 @@
-"""Usage-API clients for Anthropic and OpenAI.
+"""Demo usage data for the AI Spend Attribution dashboard.
 
-Both vendors expose org-level *admin* endpoints that report token usage in
-daily buckets. We pull raw token counts and convert them into a normalized
-``UsageRecord`` list; spend is estimated locally from ``pricing.py`` so the
-numbers are consistent across providers.
+This app does NOT call any admin / workspace-management APIs. Historical
+org-wide usage reporting requires an admin key, which is intentionally out of
+scope. Instead we generate a realistic, deterministic 30-day demo dataset so
+every tool and the Spend Attribution page work out of the box.
+
+The standard ``ANTHROPIC_API_KEY`` (a regular console.anthropic.com key) is only
+ever used for live Claude inference elsewhere in the app -- never for usage
+reporting.
+
+The public shape (``UsageRecord`` + ``fetch_all``) is unchanged, so analytics
+and the MCP tools are agnostic to where the data comes from.
 """
 
 from __future__ import annotations
 
-import os
+import random
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
-
-import requests
+from typing import Dict, List, Tuple
 
 import pricing
 
-ANTHROPIC_USAGE_URL = "https://api.anthropic.com/v1/organizations/usage_report/messages"
-OPENAI_USAGE_URL = "https://api.openai.com/v1/organizations/usage/completions"
-ANTHROPIC_VERSION = "2023-06-01"
-REQUEST_TIMEOUT = 60
+DEMO_SEED = 42
+DATA_SOURCE = "demo"
 
-
-class UsageError(Exception):
-    """Raised when a provider usage request fails."""
+# Representative model mix per provider with rough daily token "scale" factors.
+# (input_scale, output_scale) are base tokens/day before trend + noise.
+_DEMO_MODELS = {
+    "anthropic": [
+        ("claude-3-5-sonnet-20241022", 9_000_000, 1_300_000),
+        ("claude-3-5-haiku-20241022", 14_000_000, 2_000_000),
+        ("claude-3-opus-20240229", 1_200_000, 220_000),
+    ],
+    "openai": [
+        ("gpt-4o-2024-08-06", 8_000_000, 1_100_000),
+        ("gpt-4o-mini-2024-07-18", 26_000_000, 3_500_000),
+        ("o1-2024-12-17", 700_000, 180_000),
+    ],
+}
 
 
 @dataclass
@@ -42,176 +56,52 @@ class UsageRecord:
         return asdict(self)
 
 
-def _window(days: int) -> tuple:
+def _window(days: int) -> List[str]:
     end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     start = end - timedelta(days=days)
-    return start, end
+    return [(start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
 
 
-def _as_int(value) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _anthropic_cache_write(creation) -> int:
-    """``cache_creation`` may be an int or a dict of ephemeral buckets."""
-    if isinstance(creation, dict):
-        return sum(_as_int(v) for v in creation.values())
-    return _as_int(creation)
-
-
-# --------------------------------------------------------------------------- #
-# Anthropic
-# --------------------------------------------------------------------------- #
-def fetch_anthropic(days: int = 30) -> List[UsageRecord]:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise UsageError("ANTHROPIC_API_KEY is not set")
-
-    start, end = _window(days)
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-    params = {
-        "starting_at": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "ending_at": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "bucket_width": "1d",
-        "group_by[]": "model",
-        "limit": days + 1,
-    }
+def generate_demo(days: int = 30) -> List[UsageRecord]:
+    """Deterministic, realistic demo usage with a mild upward trend, weekend
+    dips, and a single injected spend spike (so anomaly detection has signal)."""
+    rng = random.Random(DEMO_SEED)
+    dates = _window(days)
+    anomaly_index = max(days - 9, 0)  # one obvious spike late in the window
 
     records: List[UsageRecord] = []
-    page: Optional[str] = None
-    while True:
-        q = dict(params)
-        if page:
-            q["page"] = page
-        resp = requests.get(ANTHROPIC_USAGE_URL, headers=headers, params=q, timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 401:
-            raise UsageError(
-                "Anthropic returned 401. The usage report requires an ADMIN key "
-                "(sk-ant-admin...), not a standard API key."
-            )
-        if resp.status_code >= 400:
-            raise UsageError(f"Anthropic usage request failed ({resp.status_code}): {resp.text[:300]}")
+    for i, date in enumerate(dates):
+        weekday = datetime.strptime(date, "%Y-%m-%d").weekday()
+        is_spike_day = i == anomaly_index
+        weekend = 1.0 if is_spike_day else (0.55 if weekday >= 5 else 1.0)
+        trend = 1.0 + 0.012 * i  # ~1.2% growth per day
 
-        body = resp.json()
-        for bucket in body.get("data", []):
-            day = (bucket.get("starting_at") or "")[:10]
-            for item in bucket.get("results", []):
-                model = item.get("model") or "unknown"
-                input_tokens = _as_int(item.get("uncached_input_tokens"))
-                output_tokens = _as_int(item.get("output_tokens"))
-                cache_read = _as_int(item.get("cache_read_input_tokens"))
-                cache_write = _anthropic_cache_write(item.get("cache_creation"))
+        for provider, models in _DEMO_MODELS.items():
+            spike = 3.0 if is_spike_day else 1.0
+            for model, in_scale, out_scale in models:
+                noise = rng.uniform(0.78, 1.22)
+                factor = trend * weekend * noise * spike
+                input_tokens = int(in_scale * factor)
+                output_tokens = int(out_scale * factor)
+                cache_read = int(input_tokens * rng.uniform(0.0, 0.25))
                 cost = pricing.estimate_cost(
-                    "anthropic", model, input_tokens, output_tokens, cache_read, cache_write
+                    provider, model, input_tokens, output_tokens, cache_read, 0
                 )
                 records.append(
                     UsageRecord(
-                        provider="anthropic",
-                        date=day,
+                        provider=provider,
+                        date=date,
                         model=model,
                         input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        cache_read_tokens=cache_read,
-                        cache_write_tokens=cache_write,
-                        cost_usd=cost,
-                    )
-                )
-        if body.get("has_more") and body.get("next_page"):
-            page = body["next_page"]
-        else:
-            break
-    return records
-
-
-# --------------------------------------------------------------------------- #
-# OpenAI
-# --------------------------------------------------------------------------- #
-def fetch_openai(days: int = 30) -> List[UsageRecord]:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise UsageError("OPENAI_API_KEY is not set")
-
-    start, end = _window(days)
-    headers = {"Authorization": f"Bearer {api_key}"}
-    org_id = os.environ.get("OPENAI_ORG_ID")
-    if org_id:
-        headers["OpenAI-Organization"] = org_id
-
-    params = {
-        "start_time": int(start.timestamp()),
-        "end_time": int(end.timestamp()),
-        "bucket_width": "1d",
-        "group_by[]": "model",
-        "limit": days + 1,
-    }
-
-    records: List[UsageRecord] = []
-    page: Optional[str] = None
-    while True:
-        q = dict(params)
-        if page:
-            q["page"] = page
-        resp = requests.get(OPENAI_USAGE_URL, headers=headers, params=q, timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 401:
-            raise UsageError(
-                "OpenAI returned 401. The usage endpoint requires an ADMIN key "
-                "(sk-admin...) with api.usage.read scope."
-            )
-        if resp.status_code >= 400:
-            raise UsageError(f"OpenAI usage request failed ({resp.status_code}): {resp.text[:300]}")
-
-        body = resp.json()
-        for bucket in body.get("data", []):
-            ts = bucket.get("start_time")
-            day = (
-                datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
-                if ts
-                else "unknown"
-            )
-            for item in bucket.get("results", []) or bucket.get("result", []):
-                model = item.get("model") or "unknown"
-                input_tokens = _as_int(item.get("input_tokens"))
-                output_tokens = _as_int(item.get("output_tokens"))
-                cache_read = _as_int(item.get("input_cached_tokens"))
-                input_uncached = max(input_tokens - cache_read, 0)
-                cost = pricing.estimate_cost(
-                    "openai", model, input_uncached, output_tokens, cache_read, 0
-                )
-                records.append(
-                    UsageRecord(
-                        provider="openai",
-                        date=day,
-                        model=model,
-                        input_tokens=input_uncached,
                         output_tokens=output_tokens,
                         cache_read_tokens=cache_read,
                         cache_write_tokens=0,
                         cost_usd=cost,
                     )
                 )
-        if body.get("has_more") and body.get("next_page"):
-            page = body["next_page"]
-        else:
-            break
     return records
 
 
-def fetch_all(days: int = 30) -> tuple:
-    """Fetch both providers. Returns (records, errors_by_provider)."""
-    records: List[UsageRecord] = []
-    errors: Dict[str, str] = {}
-    for name, fn in (("anthropic", fetch_anthropic), ("openai", fetch_openai)):
-        try:
-            records.extend(fn(days))
-        except UsageError as exc:
-            errors[name] = str(exc)
-        except requests.RequestException as exc:
-            errors[name] = f"network error: {exc}"
-    return records, errors
+def fetch_all(days: int = 30) -> Tuple[List[UsageRecord], Dict[str, str]]:
+    """Return (records, errors). Demo data never errors, so errors is empty."""
+    return generate_demo(days), {}

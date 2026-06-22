@@ -1,7 +1,8 @@
 """ai-spend-attribution: an MCP server for AI spend attribution.
 
-Pulls daily token usage from the Anthropic and OpenAI org-level usage APIs,
-estimates spend from public pricing, and exposes analysis as MCP tools.
+Runs on built-in demo usage data (see usage.py) and estimates spend from public
+pricing. It makes NO admin / workspace-management or usage-reporting API calls.
+The standard ANTHROPIC_API_KEY is used only for live Claude inference elsewhere.
 """
 
 from __future__ import annotations
@@ -48,11 +49,12 @@ def _load(days: Optional[int]) -> Tuple[List[UsageRecord], Dict[str, str]]:
 
 
 def _errors_note(errors: Dict[str, str]) -> str:
-    if not errors:
-        return ""
-    lines = ["", "> Warnings:"]
-    for provider, msg in errors.items():
-        lines.append(f"> - {provider}: {msg}")
+    lines = ["", "_Source: built-in demo data (no admin/usage API calls)._"]
+    if errors:
+        lines.append("")
+        lines.append("> Warnings:")
+        for provider, msg in errors.items():
+            lines.append(f"> - {provider}: {msg}")
     return "\n".join(lines)
 
 
@@ -206,6 +208,7 @@ def get_raw_usage(days: int = 0) -> str:
     """Return the normalized usage records as JSON (debugging / export)."""
     records, errors = _load(days or None)
     payload = {
+        "source": "demo",
         "records": [r.as_dict() for r in records],
         "errors": errors,
         "count": len(records),
