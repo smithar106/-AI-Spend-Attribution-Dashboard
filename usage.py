@@ -81,9 +81,12 @@ def generate_demo(days: int = 30) -> List[UsageRecord]:
             for model, in_scale, out_scale in models:
                 noise = rng.uniform(0.78, 1.22)
                 factor = trend * weekend * noise * spike
-                input_tokens = int(in_scale * factor)
+                total_input = int(in_scale * factor)
                 output_tokens = int(out_scale * factor)
-                cache_read = int(input_tokens * rng.uniform(0.0, 0.25))
+                # cache_read is a portion of total input; the remainder is
+                # billed as uncached input (pricing treats them as disjoint).
+                cache_read = int(total_input * rng.uniform(0.0, 0.25))
+                input_tokens = total_input - cache_read
                 cost = pricing.estimate_cost(
                     provider, model, input_tokens, output_tokens, cache_read, 0
                 )

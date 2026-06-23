@@ -138,7 +138,6 @@ def compare_providers(records: List[UsageRecord]) -> Dict:
     for provider in ("anthropic", "openai"):
         recs = [r for r in records if r.provider == provider]
         daily = {d: c for d, c in by_prov_daily.get(provider, {}).items()}
-        # zero-fill against the union range for a fair trajectory
         out[provider] = {
             "total_spend_usd": by_provider.get(provider, 0.0),
             "active_days": len(daily),
