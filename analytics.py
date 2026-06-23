@@ -135,7 +135,7 @@ def compare_providers(records: List[UsageRecord]) -> Dict:
     by_provider = total_by_provider(records)
     by_prov_daily = daily_by_provider(records)
     out: Dict[str, Dict] = {}
-    for provider in ("anthropic", "openai"):
+    for provider in sorted({r.provider for r in records}):
         recs = [r for r in records if r.provider == provider]
         daily = {d: c for d, c in by_prov_daily.get(provider, {}).items()}
         out[provider] = {

@@ -109,13 +109,15 @@ def get_daily_breakdown(provider: str = "all", days: int = 0) -> str:
     """Daily spend broken down by day and model.
 
     Args:
-        provider: "anthropic", "openai", or "all" (default).
+        provider: "anthropic", "gemini", "deepseek", or "all" (default).
         days: Lookback window in days (defaults to LOOKBACK_DAYS or 30).
     """
     records, errors = _load(days or None)
     provider = (provider or "all").lower()
-    if provider not in ("all", "anthropic", "openai"):
-        return f"Unknown provider '{provider}'. Use anthropic, openai, or all."
+    available = sorted({r.provider for r in records})
+    if provider not in (["all"] + available):
+        opts = ", ".join(available + ["all"])
+        return f"Unknown provider '{provider}'. Use one of: {opts}."
     if provider != "all":
         records = [r for r in records if r.provider == provider]
     if not records:
@@ -171,7 +173,8 @@ def get_anomalies(multiplier: float = 2.0, window: int = 7, days: int = 0) -> st
 
 @mcp.tool()
 def compare_providers(days: int = 0) -> str:
-    """Compare Anthropic vs OpenAI: total spend, trajectory, and top model.
+    """Compare providers (Anthropic, Gemini, DeepSeek): total spend, trajectory,
+    and top model.
 
     Args:
         days: Lookback window in days (defaults to LOOKBACK_DAYS or 30).
@@ -183,8 +186,8 @@ def compare_providers(days: int = 0) -> str:
     cmp = analytics.compare_providers(records)
     summary = cmp.pop("summary")
     lines = ["# Provider Comparison", ""]
-    for provider in ("anthropic", "openai"):
-        info = cmp.get(provider, {})
+    for provider in sorted(cmp):
+        info = cmp[provider]
         top = info.get("top_model")
         top_str = f"{top['model']} (${top['cost_usd']:,.2f})" if top else "n/a"
         lines += [

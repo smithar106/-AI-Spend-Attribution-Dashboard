@@ -1,9 +1,9 @@
 # ai-spend-attribution
 
 An [MCP](https://modelcontextprotocol.io) server that powers an **AI Spend
-Attribution** dashboard. It analyzes daily token usage across **Anthropic** and
-**OpenAI** models, estimates spend from public list pricing, detects spend
-spikes, and exposes everything as MCP tools your assistant can call.
+Attribution** dashboard. It analyzes daily token usage across **Anthropic**,
+**Gemini**, and **DeepSeek** models, estimates spend from public list pricing,
+detects spend spikes, and exposes everything as MCP tools your assistant can call.
 
 > **Data source:** this app runs on a built-in, realistic **demo dataset**
 > (30 days, multiple models per provider). It makes **no admin / workspace-
@@ -13,8 +13,8 @@ spikes, and exposes everything as MCP tools your assistant can call.
 
 ## Features
 
-- Realistic **30-day demo usage** across multiple Anthropic and OpenAI models
-  (configurable window).
+- Realistic **30-day demo usage** across multiple Anthropic, Gemini, and
+  DeepSeek models (configurable window).
 - Breaks usage down by **model**, **day**, and **cumulative spend**
   (computed from public pricing in `pricing.py`).
 - **Anomaly detection** — flags any day where total spend exceeds **2x the
@@ -30,7 +30,7 @@ spikes, and exposes everything as MCP tools your assistant can call.
 | `get_spend_summary` | Total spend by provider, most expensive model, trajectory, anomaly count. |
 | `get_daily_breakdown` | Spend per day and per model (filter by `provider`). |
 | `get_anomalies` | Days exceeding `multiplier`x the `window`-day rolling average. |
-| `compare_providers` | Anthropic vs OpenAI: totals, trajectory, top model. |
+| `compare_providers` | Per provider (Anthropic, Gemini, DeepSeek): totals, trajectory, top model. |
 | `get_raw_usage` | Normalized usage records as JSON (export / debugging). |
 
 ## Requirements
@@ -94,22 +94,24 @@ Add this to your client's MCP config (`claude_desktop_config.json`):
 ```
 # AI Spend Summary (last 30 days)
 
-Total estimated spend: $4,182.55
+Total estimated spend: $4,204.48
 Trajectory: increasing
 Anomalous days: 1
 
 ## Spend by provider
-- openai: $2,560.10
-- anthropic: $1,622.45
+- anthropic: $3,143.77
+- deepseek: $645.73
+- gemini: $414.98
 
 ## Most expensive model
-- openai / gpt-4o-2024-08-06: $1,910.22
+- anthropic / claude-3-5-sonnet-20241022: $1,418.41
 
 ## Top models
-- openai / gpt-4o-2024-08-06: $1,910.22 (612,400,000 in / 88,100,000 out)
-- anthropic / claude-3-5-sonnet-20241022: $1,204.10 (310,500,000 in / 41,200,000 out)
-- openai / gpt-4o-mini-2024-07-18: $649.88 (3,210,000,000 in / 410,000,000 out)
-- anthropic / claude-3-5-haiku-20241022: $418.35 (402,100,000 in / 60,400,000 out)
+- anthropic / claude-3-5-sonnet-20241022: $1,418.41 (254,770,435 in / 42,778,781 out)
+- anthropic / claude-3-opus-20240229: $1,103.05 (36,460,577 in / 7,343,358 out)
+- anthropic / claude-3-5-haiku-20241022: $622.31 (423,377,749 in / 69,622,527 out)
+- deepseek / deepseek-chat: $307.97 (668,793,053 in / 110,314,862 out)
+- deepseek / deepseek-reasoner: $274.63 (173,719,211 in / 80,108,310 out)
 
 _Source: built-in demo data (no admin/usage API calls)._
 ```
@@ -119,7 +121,7 @@ _Source: built-in demo data (no admin/usage API calls)._
 ```
 # Spend Anomalies (2.0x over 7-day rolling avg)
 
-- 2025-06-13: $498.20 (rolling avg $121.40, 4.1x)
+- 2026-06-14: $448.06 (rolling avg $131.37, 3.41x)
 
 _Source: built-in demo data (no admin/usage API calls)._
 ```
